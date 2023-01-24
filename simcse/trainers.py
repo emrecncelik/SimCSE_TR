@@ -131,8 +131,8 @@ class CLTrainer(Trainer):
         similarity = lambda s1, s2: np.nan_to_num(cosine(np.nan_to_num(s1), np.nan_to_num(s2)))
 
         for ii in range(0, len(gs_scores), params["classifier"]["batch_size"]):
-            batch1 = input1[ii:ii + params.batch_size]
-            batch2 = input2[ii:ii + params.batch_size]
+            batch1 = input1[ii:ii + params["classifier"]["batch_size"]]
+            batch2 = input2[ii:ii + params["classifier"]["batch_size"]]
 
             # we assume get_batch already throws out the faulty ones
             if len(batch1) == len(batch2) and len(batch1) > 0:
@@ -142,6 +142,7 @@ class CLTrainer(Trainer):
                 for kk in range(enc2.shape[0]):
                     sys_score = similarity(enc1[kk], enc2[kk])
                     sys_scores.append(sys_score)
+                    
         results = {'pearson': pearsonr(sys_scores, gs_scores),
                    'spearman': spearmanr(sys_scores, gs_scores),
                    'nsamples': len(sys_scores)}
