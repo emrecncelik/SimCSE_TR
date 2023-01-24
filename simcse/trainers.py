@@ -142,14 +142,11 @@ class CLTrainer(Trainer):
                 for kk in range(enc2.shape[0]):
                     sys_score = similarity(enc1[kk], enc2[kk])
                     sys_scores.append(sys_score)
-                    
+
         results = {'pearson': pearsonr(sys_scores, gs_scores),
                    'spearman': spearmanr(sys_scores, gs_scores),
                    'nsamples': len(sys_scores)}
 
-        logging.debug('%s : pearson = %.4f, spearman = %.4f' %
-                        ("STSb_TR", results['pearson'][0],
-                        results['spearman'][0]))
 
         self.model.eval()
         stsb_spearman = results['spearman'][0]
