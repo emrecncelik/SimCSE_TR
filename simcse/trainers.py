@@ -125,9 +125,9 @@ class CLTrainer(Trainer):
                                             'tenacity': 3, 'epoch_size': 2}
 
         sys_scores = []
-        input1 = list(eval_dataset["sentence1"])
-        input2 = list(eval_dataset["sentence2"])
-        gs_scores = list(eval_dataset["score"])
+        input1 = [s.split() for s in list(eval_dataset["sentence1"])]
+        input2 = [s.split() for s in list(eval_dataset["sentence2"])]
+        gs_scores = list(eval_dataset["score"] / 5)
         similarity = lambda s1, s2: np.nan_to_num(cosine(np.nan_to_num(s1), np.nan_to_num(s2)))
 
         for ii in range(0, len(gs_scores), params["classifier"]["batch_size"]):
