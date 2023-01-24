@@ -10,6 +10,7 @@ import time
 import warnings
 from pathlib import Path
 import importlib.util
+import pandas as pd
 from packaging import version
 from transformers import Trainer
 from transformers.modeling_utils import PreTrainedModel
@@ -57,6 +58,7 @@ from torch.utils.data.dataset import Dataset
 from torch.utils.data.distributed import DistributedSampler
 from torch.utils.data.sampler import RandomSampler, SequentialSampler
 
+from scipy.stats import spearmanr, pearsonr
 if is_torch_tpu_available():
     import torch_xla.core.xla_model as xm
     import torch_xla.debug.metrics as met
@@ -76,66 +78,83 @@ from transformers.trainer import _model_unwrap
 from transformers.optimization import Adafactor, AdamW, get_scheduler
 import copy
 
+PATH_TO_DATA = './data/stsb'
+
 import numpy as np
 from datetime import datetime
 from filelock import FileLock
 
 logger = logging.get_logger(__name__)
 
+def cosine(u, v):
+    return np.dot(u, v) / (np.linalg.norm(u) * np.linalg.norm(v))
+
 class CLTrainer(Trainer):
 
-    # def evaluate(
-    #     self,
-    #     eval_dataset: Optional[Dataset] = None,
-    #     ignore_keys: Optional[List[str]] = None,
-    #     metric_key_prefix: str = "eval",
-    #     eval_senteval_transfer: bool = False,
-    # ) -> Dict[str, float]:
+    def evaluate(
+        self,
+        eval_dataset: Optional[Dataset] = None,
+        ignore_keys: Optional[List[str]] = None,
+        metric_key_prefix: str = "eval",
+        eval_senteval_transfer: bool = False,
+    ) -> Dict[str, float]:
 
-    #     # SentEval prepare and batcher
-    #     def prepare(params, samples):
-    #         return
+        if not eval_dataset:
+            eval_dataset = pd.read_csv(os.path.join(PATH_TO_DATA, "dev.csv"))
 
-    #     def batcher(params, batch):
-    #         sentences = [' '.join(s) for s in batch]
-    #         batch = self.tokenizer.batch_encode_plus(
-    #             sentences,
-    #             return_tensors='pt',
-    #             padding=True,
-    #         )
-    #         for k in batch:
-    #             batch[k] = batch[k].to(self.args.device)
-    #         with torch.no_grad():
-    #             outputs = self.model(**batch, output_hidden_states=True, return_dict=True, sent_emb=True)
-    #             pooler_output = outputs.pooler_output
-    #         return pooler_output.cpu()
+        def batcher(params, batch):
+            sentences = [' '.join(s) for s in batch]
+            batch = self.tokenizer.batch_encode_plus(
+                sentences,
+                return_tensors='pt',
+                padding=True,
+            )
 
-    #     # Set params for SentEval (fastmode)
-    #     params = {'task_path': PATH_TO_DATA, 'usepytorch': True, 'kfold': 5}
-    #     params['classifier'] = {'nhid': 0, 'optim': 'rmsprop', 'batch_size': 128,
-    #                                         'tenacity': 3, 'epoch_size': 2}
+            for k in batch:
+                batch[k] = batch[k].to(self.args.device)
 
-    #     se = senteval.engine.SE(params, batcher, prepare)
-    #     tasks = ['STSBenchmark', 'SICKRelatedness']
-    #     if eval_senteval_transfer or self.args.eval_transfer:
-    #         tasks = ['STSBenchmark', 'SICKRelatedness', 'MR', 'CR', 'SUBJ', 'MPQA', 'SST2', 'TREC', 'MRPC']
-    #     self.model.eval()
-    #     results = se.eval(tasks)
-        
-    #     stsb_spearman = results['STSBenchmark']['dev']['spearman'][0]
-    #     sickr_spearman = results['SICKRelatedness']['dev']['spearman'][0]
+            with torch.no_grad():
+                outputs = self.model(**batch, output_hidden_states=True, return_dict=True, sent_emb=True)
+                pooler_output = outputs.pooler_output
 
-    #     metrics = {"eval_stsb_spearman": stsb_spearman, "eval_sickr_spearman": sickr_spearman, "eval_avg_sts": (stsb_spearman + sickr_spearman) / 2} 
-    #     if eval_senteval_transfer or self.args.eval_transfer:
-    #         avg_transfer = 0
-    #         for task in ['MR', 'CR', 'SUBJ', 'MPQA', 'SST2', 'TREC', 'MRPC']:
-    #             avg_transfer += results[task]['devacc']
-    #             metrics['eval_{}'.format(task)] = results[task]['devacc']
-    #         avg_transfer /= 7
-    #         metrics['eval_avg_transfer'] = avg_transfer
+            return pooler_output.cpu()
 
-    #     self.log(metrics)
-    #     return metrics
+        # Set params for SentEval (fastmode)
+        params = {'task_path': PATH_TO_DATA, 'usepytorch': True, 'kfold': 5}
+        params['classifier'] = {'nhid': 0, 'optim': 'rmsprop', 'batch_size': 128,
+                                            'tenacity': 3, 'epoch_size': 2}
+
+        sys_scores = []
+        input1 = list(eval_dataset["sentence1"])
+        input2 = list(eval_dataset["sentence2"])
+        gs_scores = list(eval_dataset["score"])
+        similarity = lambda s1, s2: np.nan_to_num(cosine(np.nan_to_num(s1), np.nan_to_num(s2)))
+
+        for ii in range(0, len(gs_scores), params["classifier"]["batch_size"]):
+            batch1 = input1[ii:ii + params.batch_size]
+            batch2 = input2[ii:ii + params.batch_size]
+
+            # we assume get_batch already throws out the faulty ones
+            if len(batch1) == len(batch2) and len(batch1) > 0:
+                enc1 = batcher(params, batch1)
+                enc2 = batcher(params, batch2)
+
+                for kk in range(enc2.shape[0]):
+                    sys_score = similarity(enc1[kk], enc2[kk])
+                    sys_scores.append(sys_score)
+        results = {'pearson': pearsonr(sys_scores, gs_scores),
+                   'spearman': spearmanr(sys_scores, gs_scores),
+                   'nsamples': len(sys_scores)}
+
+        logging.debug('%s : pearson = %.4f, spearman = %.4f' %
+                        ("STSb_TR", results['pearson'][0],
+                        results['spearman'][0]))
+
+        self.model.eval()
+        stsb_spearman = results['spearman'][0]
+        metrics = {"eval_stsb_spearman": stsb_spearman} 
+        self.log(metrics)
+        return metrics
         
     def _save_checkpoint(self, model, trial, metrics=None):
         """
