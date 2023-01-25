@@ -1,3 +1,12 @@
+## SimCSE TR
+
+This repository modifies SimCSE training and evaluation codes to make it trainable for Turkish. This was required because there is no Turkish data in SentEval and validation would not be correct.
+
+Here is a [Colab Notebook](https://colab.research.google.com/drive/1Ysq1SpFOa7n1X79x2HxyWjfKzuR_gDQV?usp=sharing) where you can train your models.
+
+Rest of the README is the same as the original.
+
+
 ## SimCSE: Simple Contrastive Learning of Sentence Embeddings
 
 This repository contains the code and pre-trained models for our paper [SimCSE: Simple Contrastive Learning of Sentence Embeddings](https://arxiv.org/abs/2104.08821).
